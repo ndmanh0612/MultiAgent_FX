@@ -1,4 +1,4 @@
-"""Domain models for Forex instruments, market data, and indicators."""
+"""Domain models for Forex instruments, market data, indicators, and signals."""
 
 from __future__ import annotations
 
@@ -98,7 +98,6 @@ class Candle(BaseModel):
     @classmethod
     def _ensure_utc(cls, v: Any) -> datetime:
         if isinstance(v, str):
-            # Parse ISO string
             dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
         elif isinstance(v, datetime):
             dt = v
@@ -177,3 +176,90 @@ class MarketSnapshot(BaseModel):
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC)
         return dt.astimezone(UTC)
+
+
+class SignalAction(StrEnum):
+    """Trading signal action."""
+
+    BUY = "BUY"
+    SELL = "SELL"
+    NO_TRADE = "NO_TRADE"
+
+
+class SignalStatus(StrEnum):
+    """Trading signal status."""
+
+    PENDING = "PENDING"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+    FILLED = "FILLED"
+
+
+class ForexSignal(BaseModel):
+    """Validated, deterministic Forex trade signal produced by the Signal Engine."""
+
+    symbol: ForexPair
+    timeframe: str = Field(default="H1")
+    action: SignalAction
+    entry: float | None = Field(default=None, description="Verified Entry price level")
+    stop_loss: float | None = Field(default=None, description="Verified Stop Loss price level")
+    take_profit: float | None = Field(default=None, description="Verified Take Profit price level")
+    risk_reward: float | None = Field(default=None, description="Risk/Reward ratio")
+    reason: str = Field(description="Explanatory reasoning for signal or rejection")
+    candle_timestamp: datetime = Field(description="Timestamp of the completed H1 candle in UTC")
+    model_name: str = Field(description="Name/identifier of the model that evaluated the setup")
+    status: SignalStatus = Field(default=SignalStatus.PENDING)
+    sl_pips: float | None = Field(default=None, description="Stop Loss distance in pips")
+    tp_pips: float | None = Field(default=None, description="Take Profit distance in pips")
+    spread_pips: float | None = Field(default=None, description="Current market spread in pips at evaluation")
+
+    @field_validator("candle_timestamp", mode="before")
+    @classmethod
+    def _ensure_utc(cls, v: Any) -> datetime:
+        if isinstance(v, str):
+            dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        elif isinstance(v, datetime):
+            dt = v
+        else:
+            raise ValueError(f"Invalid timestamp value: {v!r}")
+
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def _validate_signal_integrity(self) -> ForexSignal:
+        if self.action in (SignalAction.BUY, SignalAction.SELL):
+            if self.entry is None or self.stop_loss is None or self.take_profit is None or self.risk_reward is None:
+                raise ValueError("Active signals (BUY/SELL) require entry, stop_loss, take_profit, and risk_reward.")
+
+            if self.entry <= 0 or self.stop_loss <= 0 or self.take_profit <= 0:
+                raise ValueError("Price levels must be strictly positive.")
+
+            if self.action == SignalAction.BUY and not (self.stop_loss < self.entry < self.take_profit):
+                raise ValueError(
+                    f"BUY order ordering violation: Stop Loss ({self.stop_loss}) < "
+                    f"Entry ({self.entry}) < Take Profit ({self.take_profit}) is required."
+                )
+            elif self.action == SignalAction.SELL and not (self.take_profit < self.entry < self.stop_loss):
+                raise ValueError(
+                    f"SELL order ordering violation: Take Profit ({self.take_profit}) < "
+                    f"Entry ({self.entry}) < Stop Loss ({self.stop_loss}) is required."
+                )
+        return self
+
+    def to_output_dict(self) -> dict[str, Any]:
+        """Produce the exact dictionary representation requested by project specification."""
+        return {
+            "symbol": self.symbol.value,
+            "timeframe": self.timeframe,
+            "action": self.action.value,
+            "entry": self.entry,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "risk_reward": self.risk_reward,
+            "reason": self.reason,
+            "candle_timestamp": self.candle_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "model_name": self.model_name,
+            "status": self.status.value,
+        }
