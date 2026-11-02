@@ -1,0 +1,63 @@
+name: Forex AI Multi-Agent Signal Bot
+
+on:
+  # Run 5 minutes past each hour to ensure H1 candle close across brokers
+  schedule:
+    - cron: '5 * * * *'
+  # Support manual trigger from GitHub UI / API
+  workflow_dispatch:
+    inputs:
+      mock_mode:
+        description: 'Run in offline mock mode (no real API calls)'
+        required: false
+        default: 'false'
+        type: boolean
+      dry_run:
+        description: 'Telegram dry-run mode (do not post to channel)'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: forex-signals-h1
+  cancel-in-progress: false
+
+jobs:
+  analyze-and-signal:
+    name: Run Forex H1 Multi-Agent Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install apscheduler
+
+      - name: Run Forex Multi-Agent Analysis
+        env:
+          # Core API Secrets (configured under Repository Settings -> Secrets and variables -> Actions)
+          OANDA_API_KEY: ${{ secrets.OANDA_API_KEY }}
+          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
+          OANDA_ENVIRONMENT: ${{ secrets.OANDA_ENVIRONMENT || 'practice' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+          OANDA_MOCK_MODE: ${{ inputs.mock_mode && 'true' || 'false' }}
+        run: |
+          # Note on GitHub Actions Cron Scheduling:
+          # GitHub Actions scheduled events may experience queueing delays of 3-15 minutes.
+          # The pipeline automatically verifies candle freshness (max 2 hours) and rejects stale data.
+          echo "Executing scheduled Forex H1 multi-agent analysis..."
+          python -m app.cli run-once
