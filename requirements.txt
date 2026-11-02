@@ -1,3 +1,9 @@
 # The dependencies are declared in pyproject.toml. From the repository root this
-# installs TradingAgents with them, the same as `pip install .`
-.
+# installs TradingAgents and dependencies, the same as `pip install -e .`
+-e .
+
+# Forex AI Multi-Agent Telegram Signal Bot Extensions
+pydantic>=2.7.0
+apscheduler>=3.10.0
+pytest>=8.0
+ruff>=0.16
